@@ -9,6 +9,9 @@ from sklearn.metrics import matthews_corrcoef, f1_score
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
+from torcheval.metrics import BinaryAccuracy, BinaryF1Score, BinaryConfusionMatrix
+
+import matplotlib.pyplot as plt
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -60,9 +63,15 @@ class SpeciesNet(nn.Module):
 
 model = SpeciesNet(X_train.shape[1]).to(device)
 criterion = nn.BCELoss().to(device)
+accuracy = BinaryAccuracy().to(device)
+f1 = BinaryF1Score().to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
 # 5. Training loop
+train_accuracy = []
+train_f1 = []
+val_accuracy = []
+val_f1 = []
 for epoch in range(20):
     model.train()
     epoch_loss = 0
@@ -74,7 +83,70 @@ for epoch in range(20):
         loss.backward()
         optimizer.step()
         epoch_loss += loss.item()
+        accuracy.update(preds.squeeze(1), yb.squeeze(1))
+        f1.update(preds.squeeze(1), yb.squeeze(1))
+    train_accuracy.append(accuracy.compute().cpu().numpy())
+    train_f1.append(f1.compute().cpu().numpy())
     print(f"Epoch {epoch+1}, Loss: {epoch_loss:.4f}")
+
+    accuracy.reset()
+    f1.reset()
+    model.eval()
+    with torch.no_grad():
+        train_probs = model(X_train_tensor).cpu().numpy().flatten()
+
+    cal = IsotonicRegression(out_of_bounds='clip')
+    cal.fit(train_probs, y_train)
+
+    with torch.no_grad():
+        val_probs_raw = model(X_val_tensor)
+        accuracy.update(preds.squeeze(1), yb.squeeze(1))
+        f1.update(preds.squeeze(1), yb.squeeze(1))
+    val_accuracy.append(accuracy.compute().cpu().numpy())
+    val_f1.append(f1.compute().cpu().numpy())
+
+    val_probs_cal = cal.predict(val_probs_raw.cpu().numpy().flatten())
+
+    # 7. Threshold tuning
+    best_mcc, best_f1, best_thresh = -1, -1, 0
+    for t in np.linspace(0, 1, 100):
+        preds = (val_probs_cal > t).astype(int)
+        m = matthews_corrcoef(y_val, preds)
+        f = f1_score(y_val, preds)
+        if m > best_mcc:
+            best_mcc, best_f1, best_thresh = m, f, t
+
+    print(f"Best threshold: {best_thresh:.3f}, MCC: {best_mcc:.3f}, F1: {best_f1:.3f}")
+    accuracy.reset()
+    f1.reset()
+    model.train()
+
+## Plot accuracy and f1
+plt.plot(range(20), train_accuracy)
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy')
+plt.title('Training Accuracy')
+plt.savefig('train_accuracy.png')
+plt.close()
+plt.plot(range(20), train_f1)
+plt.xlabel('Epoch')
+plt.ylabel('F1 Score')
+plt.title('Training F1 Score')
+plt.savefig('train_f1.png')
+plt.close()
+plt.plot(range(20), val_accuracy)
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy')
+plt.title('Validation Accuracy')
+plt.savefig('val_accuracy.png')
+plt.close()
+plt.plot(range(20), val_f1)
+plt.xlabel('Epoch')
+plt.ylabel('F1 Score')
+plt.title('Validation F1 Score')
+plt.savefig('val_f1.png')
+plt.close()
+
 
 # 6. Predict and calibrate with isotonic regression
 model.eval()
