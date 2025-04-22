@@ -187,7 +187,7 @@ results = {}
 batchsize = 32
 kfold = model_selection.KFold(n_splits = folds, shuffle = True, random_state = 6260)
 for params in itertools.product(*parameter_grid.values()):
-    num_layers, dropout_rate, learning_rate, num_conv, kernelsize, pad, stride_len, hidden_dim = params
+    num_layers, dropout_rate, learning_rate, kernelsize, pad, stride_len, hidden_dim = params
     scores = []
     for folds, (train_index, test_index) in enumerate(kfold.split(dataset)):
         train_subset = Subset(dataset, train_index)
@@ -196,13 +196,13 @@ for params in itertools.product(*parameter_grid.values()):
         testloader = DataLoader(test_subset, batch_size = batchsize)
 
         model = birdNN(input_dim = num_features, output_dim = num_classes,
-                       num_layers = num_layers, dropout_rate = dropout_rate, 
-                       num_conv = num_conv, kernelsize = kernelsize, pad = pad, stride_len = stride_len, 
+                       num_layers = num_layers, dropout_rate = dropout_rate,
+                       kernelsize = kernelsize, pad = pad, stride_len = stride_len, 
                        hidden_dim = hidden_dim
                 )
-        criterion = nn.CrossEntropyLoss()
-        accuracy = metrics.MulticlassAccuracy(num_classes = num_classes)
-        auroc = metrics.MulticlassAUROC(num_classes = num_classes)
+        criterion = nn.CrossEntropyLoss().to(device)
+        accuracy = metrics.BinaryAccuracy().to(device)
+        auroc = metrics.BinaryAUROC().to(device)
         # confusion_matrix = metrics.functional.multiclass_confusion_matrix
         optimizer = optim.Adam(model.parameters(), lr = learning_rate)
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size = 10, gamma  = 0.75)
@@ -220,6 +220,7 @@ for params in itertools.product(*parameter_grid.values()):
             ## Model Training
             running_loss = 0
             for inputs, presence in trainloader:
+                inputs, presence = inputs.to(device), presence.to(device)
                 optimizer.zero_grad()
                 outputs = model(inputs)
                 loss = criterion(outputs, presence)
